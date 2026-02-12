@@ -1,0 +1,10 @@
+{
+  "name": "grand-tour-statis-football",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "test": "node tests/run-tests.js",
+    "test:soak": "node tests/soak-10000.js"
+  }
+}
