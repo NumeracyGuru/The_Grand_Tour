@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gridiron FAC Solitaire</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="layout">
+    <header class="scoreboard panel">
+      <div class="team away"><strong id="awayName">Away</strong> <span id="awayScore">0</span></div>
+      <div class="meta"><span id="quarter">Q1</span> <span id="clock">15:00</span></div>
+      <div class="team home"><strong id="homeName">Home</strong> <span id="homeScore">0</span></div>
+    </header>
+
+    <section class="field panel" aria-label="Pitch view">
+      <div class="field-inner" id="fieldVisual">
+        <div class="hash"></div>
+        <div class="hash"></div>
+        <div class="hash"></div>
+        <div class="hash"></div>
+        <div class="hash"></div>
+        <div class="ball" id="ballMarker" aria-hidden="true">🏈</div>
+      </div>
+      <p class="state" aria-live="polite" id="gameState"></p>
+    </section>
+
+    <section class="controls panel">
+      <h2>Solitaire command</h2>
+      <p class="helper">Defence calls are always automated for solitaire realism.</p>
+
+      <label>Ruleset
+        <select id="ruleset">
+          <option value="custom">Custom</option>
+          <option value="third">3rd-style</option>
+          <option value="fifth">5th-style</option>
+        </select>
+      </label>
+      <label>Offence call
+        <select id="offenseCall">
+          <option value="run">Run</option>
+          <option value="pass">Pass</option>
+          <option value="punt">Punt</option>
+          <option value="field_goal">Field goal</option>
+          <option value="kickoff">Kickoff</option>
+        </select>
+      </label>
+      <label>Offence detail
+        <select id="offenseDetail">
+          <option value="inside">Inside</option>
+          <option value="outside">Outside</option>
+          <option value="short">Short</option>
+          <option value="long">Long</option>
+        </select>
+      </label>
+
+      <h3>Coach settings</h3>
+      <label>Aggression <input id="coachAggression" type="range" min="0" max="100" value="50" /></label>
+      <label>Pass tendency <input id="coachPass" type="range" min="0" max="100" value="50" /></label>
+      <label>Blitz tendency (AI) <input id="coachBlitz" type="range" min="0" max="100" value="30" /></label>
+      <label>Clock management <input id="coachClock" type="range" min="0" max="100" value="50" /></label>
+
+      <div class="buttons">
+        <button id="resolveBtn">Resolve play</button>
+        <button id="undoBtn">Undo</button>
+        <button id="resetBtn">Reset game</button>
+      </div>
+    </section>
+
+    <section class="fac panel">
+      <h2>Fast Action Card</h2>
+      <div id="facView" class="fac-card">Draw a play to reveal the card.</div>
+      <p class="helper">Deck: <span id="deckCount">60</span> cards remaining.</p>
+    </section>
+
+    <section class="data panel">
+      <h2>Data import/export</h2>
+      <textarea id="dataText" rows="8" placeholder="Paste team JSON here"></textarea>
+      <div class="buttons">
+        <button id="exportBtn">Export teams</button>
+        <button id="importBtn">Import teams</button>
+        <button id="saveBtn">Save season slot</button>
+        <button id="loadBtn">Load season slot</button>
+      </div>
+    </section>
+
+    <aside class="panel">
+      <h2>Play-by-play</h2>
+      <ol id="log"></ol>
+      <h3>Drive summary</h3>
+      <ol id="drive"></ol>
+    </aside>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
