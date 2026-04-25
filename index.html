@@ -1,98 +1,96 @@
 <!doctype html>
-<html lang="en-GB">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Gridiron FAC Solitaire</title>
+  <title>Lancaster Night Raid Simulator</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <main class="layout">
-    <header class="scoreboard panel">
-      <div class="team away"><strong id="awayName">Away</strong> <span id="awayScore">0</span></div>
-      <div class="meta"><span id="quarter">Q1</span> <span id="clock">15:00</span></div>
-      <div class="team home"><strong id="homeName">Home</strong> <span id="homeScore">0</span></div>
+    <header class="panel header">
+      <h1>Avro Lancaster: Night Raid Simulator</h1>
+      <p>Command a WW2 bomber crew from takeoff to return over hostile territory.</p>
     </header>
 
-    <section class="field panel" aria-label="Pitch view">
-      <div class="field-inner" id="fieldVisual">
-        <div class="hash"></div>
-        <div class="hash"></div>
-        <div class="hash"></div>
-        <div class="hash"></div>
-        <div class="hash"></div>
-        <div class="ball" id="ballMarker" aria-hidden="true">🏈</div>
+    <section class="panel cockpit" aria-label="Cockpit window view and controls">
+      <h2>Cockpit Window</h2>
+      <div class="window-frame">
+        <div class="window-view" id="windowView" data-weather="clear">
+          <div class="stars"></div>
+          <div class="moon"></div>
+          <div class="clouds" id="cloudLayer"></div>
+          <div class="target-glow" id="targetGlow"></div>
+          <div class="tracers" id="tracers"></div>
+          <div class="horizon" id="horizon"></div>
+          <div class="reticle">⌖</div>
+          <div class="phase-badge" id="phaseBadge">Outbound</div>
+        </div>
       </div>
-      <p class="state" aria-live="polite" id="gameState"></p>
+
+      <div class="instruments">
+        <div class="instrument">
+          <span>Throttle Lever</span>
+          <div class="lever-track"><i id="throttleLever"></i></div>
+        </div>
+        <div class="instrument">
+          <span>Altitude Trim</span>
+          <div class="lever-track"><i id="altitudeLever"></i></div>
+        </div>
+        <div class="instrument dial">
+          <span>Integrity Gauge</span>
+          <div class="gauge">
+            <i id="integrityNeedle"></i>
+          </div>
+        </div>
+      </div>
     </section>
 
-    <section class="controls panel">
-      <h2>Solitaire command</h2>
-      <p class="helper">Defence calls are always automated for solitaire realism.</p>
+    <section class="panel status">
+      <h2>Mission Status</h2>
+      <div class="grid">
+        <div><span>Phase</span><strong id="phase">Outbound</strong></div>
+        <div><span>Time</span><strong id="time">00:00</strong></div>
+        <div><span>Distance to Target</span><strong id="distance">180 mi</strong></div>
+        <div><span>Altitude</span><strong id="altitude">12000 ft</strong></div>
+        <div><span>Fuel</span><strong id="fuel">100%</strong></div>
+        <div><span>Airframe Integrity</span><strong id="integrity">100%</strong></div>
+        <div><span>Crew Morale</span><strong id="morale">100%</strong></div>
+        <div><span>Bomb Load</span><strong id="bombLoad">100%</strong></div>
+      </div>
+      <p class="outcome" id="outcome">Mission in progress.</p>
+    </section>
 
-      <label>Ruleset
-        <select id="ruleset">
-          <option value="custom">Custom</option>
-          <option value="third">3rd-style</option>
-          <option value="fifth">5th-style</option>
+    <section class="panel controls">
+      <h2>Flight Controls</h2>
+      <label>Throttle
+        <select id="throttle">
+          <option value="economy">Economy</option>
+          <option value="cruise" selected>Cruise</option>
+          <option value="maximum">Maximum</option>
         </select>
       </label>
-      <label>Offence call
-        <select id="offenseCall">
-          <option value="run">Run</option>
-          <option value="pass">Pass</option>
-          <option value="punt">Punt</option>
-          <option value="field_goal">Field goal</option>
-          <option value="kickoff">Kickoff</option>
+      <label>Altitude band
+        <select id="altitudeBand">
+          <option value="low">Low (8,000 ft)</option>
+          <option value="medium" selected>Medium (12,000 ft)</option>
+          <option value="high">High (17,000 ft)</option>
         </select>
       </label>
-      <label>Offence detail
-        <select id="offenseDetail">
-          <option value="inside">Inside</option>
-          <option value="outside">Outside</option>
-          <option value="short">Short</option>
-          <option value="long">Long</option>
-        </select>
-      </label>
-
-      <h3>Coach settings</h3>
-      <label>Aggression <input id="coachAggression" type="range" min="0" max="100" value="50" /></label>
-      <label>Pass tendency <input id="coachPass" type="range" min="0" max="100" value="50" /></label>
-      <label>Blitz tendency (AI) <input id="coachBlitz" type="range" min="0" max="100" value="30" /></label>
-      <label>Clock management <input id="coachClock" type="range" min="0" max="100" value="50" /></label>
-
       <div class="buttons">
-        <button id="resolveBtn">Resolve play</button>
-        <button id="undoBtn">Undo</button>
-        <button id="resetBtn">Reset game</button>
+        <button id="advanceBtn">Advance 10 minutes</button>
+        <button id="evasiveBtn">Evasive manoeuvres</button>
+        <button id="bombBtn">Bomb target</button>
+        <button id="restartBtn">Restart mission</button>
       </div>
+      <p class="hint">Tip: bomb only when over target. Survive long enough to make it home.</p>
     </section>
 
-    <section class="fac panel">
-      <h2>Fast Action Card</h2>
-      <div id="facView" class="fac-card">Draw a play to reveal the card.</div>
-      <p class="helper">Deck: <span id="deckCount">60</span> cards remaining.</p>
-    </section>
-
-    <section class="data panel">
-      <h2>Data import/export</h2>
-      <textarea id="dataText" rows="8" placeholder="Paste team JSON here"></textarea>
-      <div class="buttons">
-        <button id="exportBtn">Export teams</button>
-        <button id="importBtn">Import teams</button>
-        <button id="saveBtn">Save season slot</button>
-        <button id="loadBtn">Load season slot</button>
-      </div>
-    </section>
-
-    <aside class="panel">
-      <h2>Play-by-play</h2>
+    <aside class="panel logWrap">
+      <h2>Operational Log</h2>
       <ol id="log"></ol>
-      <h3>Drive summary</h3>
-      <ol id="drive"></ol>
     </aside>
   </main>
-
   <script src="app.js"></script>
 </body>
 </html>
