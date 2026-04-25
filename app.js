@@ -223,6 +223,14 @@ if (typeof window !== 'undefined') {
     bombBtn: document.getElementById('bombBtn'),
     restartBtn: document.getElementById('restartBtn'),
     log: document.getElementById('log'),
+    windowView: document.getElementById('windowView'),
+    horizon: document.getElementById('horizon'),
+    targetGlow: document.getElementById('targetGlow'),
+    tracers: document.getElementById('tracers'),
+    phaseBadge: document.getElementById('phaseBadge'),
+    throttleLever: document.getElementById('throttleLever'),
+    altitudeLever: document.getElementById('altitudeLever'),
+    integrityNeedle: document.getElementById('integrityNeedle'),
   };
 
   let state = createMissionState();
@@ -238,6 +246,31 @@ if (typeof window !== 'undefined') {
     el.morale.textContent = `${Math.round(state.morale)}%`;
     el.bombLoad.textContent = `${Math.round(state.bombLoad)}%`;
     el.log.innerHTML = state.log.slice(-40).map((line) => `<li>${line}</li>`).join('');
+    const throttlePositions = { economy: 15, cruise: 52, maximum: 84 };
+    const altitudePositions = { low: 18, medium: 52, high: 84 };
+    const phaseLabel = state.phase.replace('_', ' ');
+    const horizonPitch = {
+      low: 8,
+      medium: 0,
+      high: -9,
+    }[state.altitudeBand] || 0;
+    const horizonBank = {
+      outbound: -1,
+      target_zone: 0,
+      homebound: 1,
+      landed: 0,
+    }[state.phase] || 0;
+    const integrityRotation = ((100 - state.integrity) / 100) * 180 - 90;
+    const inHeavyContact = state.log.slice(-2).some((line) => line.includes('Heavy hit') || line.includes('Enemy attack'));
+
+    el.windowView.dataset.weather = state.weather;
+    el.phaseBadge.textContent = phaseLabel;
+    el.horizon.style.transform = `translateY(${horizonPitch}px) rotate(${horizonBank}deg)`;
+    el.targetGlow.style.opacity = state.phase === 'target_zone' ? '1' : '0';
+    el.tracers.style.opacity = inHeavyContact ? '.5' : '0';
+    el.throttleLever.style.left = `${throttlePositions[state.throttle] || 52}%`;
+    el.altitudeLever.style.left = `${altitudePositions[state.altitudeBand] || 52}%`;
+    el.integrityNeedle.style.transform = `translateX(-50%) rotate(${integrityRotation}deg)`;
 
     if (!state.gameOver) {
       el.outcome.className = 'outcome';

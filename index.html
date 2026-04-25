@@ -13,6 +13,39 @@
       <p>Command a WW2 bomber crew from takeoff to return over hostile territory.</p>
     </header>
 
+    <section class="panel cockpit" aria-label="Cockpit window view and controls">
+      <h2>Cockpit Window</h2>
+      <div class="window-frame">
+        <div class="window-view" id="windowView" data-weather="clear">
+          <div class="stars"></div>
+          <div class="moon"></div>
+          <div class="clouds" id="cloudLayer"></div>
+          <div class="target-glow" id="targetGlow"></div>
+          <div class="tracers" id="tracers"></div>
+          <div class="horizon" id="horizon"></div>
+          <div class="reticle">⌖</div>
+          <div class="phase-badge" id="phaseBadge">Outbound</div>
+        </div>
+      </div>
+
+      <div class="instruments">
+        <div class="instrument">
+          <span>Throttle Lever</span>
+          <div class="lever-track"><i id="throttleLever"></i></div>
+        </div>
+        <div class="instrument">
+          <span>Altitude Trim</span>
+          <div class="lever-track"><i id="altitudeLever"></i></div>
+        </div>
+        <div class="instrument dial">
+          <span>Integrity Gauge</span>
+          <div class="gauge">
+            <i id="integrityNeedle"></i>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section class="panel status">
       <h2>Mission Status</h2>
       <div class="grid">
@@ -29,7 +62,7 @@
     </section>
 
     <section class="panel controls">
-      <h2>Crew Orders</h2>
+      <h2>Flight Controls</h2>
       <label>Throttle
         <select id="throttle">
           <option value="economy">Economy</option>
