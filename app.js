@@ -1,30 +1,19 @@
-/* Statis-style football simulator engine + UI (original implementation) */
+const THROTTLE_MODELS = {
+  economy: { speed: 10, fuelBurn: 2 },
+  cruise: { speed: 14, fuelBurn: 3.5 },
+  maximum: { speed: 18, fuelBurn: 5.25 },
+};
 
-const DEFAULT_RULESETS = {
-  custom: {
-    name: 'Custom',
-    quarterLength: 900,
-    playClockRunoff: { run: [20, 45], pass: [10, 30], special: [5, 20] },
-    penaltyChance: 0.08,
-    turnoverBoostOnBlitz: 0.03,
-    allowBlitz: true,
-  },
-  third: {
-    name: '3rd-style',
-    quarterLength: 900,
-    playClockRunoff: { run: [20, 40], pass: [10, 28], special: [5, 18] },
-    penaltyChance: 0.07,
-    turnoverBoostOnBlitz: 0.02,
-    allowBlitz: true,
-  },
-  fifth: {
-    name: '5th-style',
-    quarterLength: 900,
-    playClockRunoff: { run: [22, 44], pass: [10, 32], special: [5, 20] },
-    penaltyChance: 0.09,
-    turnoverBoostOnBlitz: 0.03,
-    allowBlitz: true,
-  },
+const ALTITUDE_MODELS = {
+  low: { feet: 8000, flakRisk: 0.2, fighterRisk: 0.11 },
+  medium: { feet: 12000, flakRisk: 0.14, fighterRisk: 0.14 },
+  high: { feet: 17000, flakRisk: 0.1, fighterRisk: 0.18 },
+};
+
+const WEATHER_MODELS = {
+  clear: { navPenalty: 0, interceptBonus: 0.05 },
+  broken_cloud: { navPenalty: 1, interceptBonus: 0 },
+  storm: { navPenalty: 3, interceptBonus: -0.06 },
 };
 
 function mulberry32(seed) {
@@ -37,426 +26,252 @@ function mulberry32(seed) {
   };
 }
 
-function randInt(rng, min, max) {
-  return Math.floor(rng() * (max - min + 1)) + min;
+function pickWeather(rng) {
+  const roll = rng();
+  if (roll < 0.5) return 'broken_cloud';
+  if (roll < 0.8) return 'clear';
+  return 'storm';
 }
 
-function makeFACDeck(seed = Date.now()) {
+function createMissionState(options = {}) {
+  const seed = options.seed ?? 617;
   const rng = mulberry32(seed);
-  const fresh = () => Array.from({ length: 60 }, (_, i) => ({
-    id: i,
-    runPassKey: rng() < 0.48 ? 'run' : 'pass',
-    direction: ['left', 'middle', 'right'][randInt(rng, 0, 2)],
-    primary: randInt(rng, 1, 20),
-    secondary: randInt(rng, 1, 20),
-    bigPlay: rng() < 0.08,
-    turnoverCheck: rng() < 0.1,
-    penaltyCheck: rng() < 0.12,
-  }));
-  return { drawPile: fresh(), discardPile: [], seed };
-}
-
-function drawFAC(deck, rng) {
-  if (deck.drawPile.length === 0) {
-    deck.drawPile = deck.discardPile.splice(0);
-    for (let i = deck.drawPile.length - 1; i > 0; i -= 1) {
-      const j = randInt(rng, 0, i);
-      [deck.drawPile[i], deck.drawPile[j]] = [deck.drawPile[j], deck.drawPile[i]];
-    }
-  }
-  const card = deck.drawPile.pop();
-  deck.discardPile.push(card);
-  return card;
-}
-
-function defaultTeam(name) {
   return {
-    name,
-    ratings: {
-      offence: { run: 60, pass: 60, qb: 60, rb: 60, wr: 60, ol: 60 },
-      defence: { run: 60, pass: 60, front: 60, secondary: 60 },
-      special: { kicker: 60, punter: 60, return: 60 },
-      tendencies: { pass: 50, aggression: 50, blitz: 30, clock: 50 },
-    },
-  };
-}
-
-function createInitialState(options = {}) {
-  const rulesetKey = options.ruleset || 'custom';
-  const rules = DEFAULT_RULESETS[rulesetKey] || DEFAULT_RULESETS.custom;
-  return {
-    ruleset: rulesetKey,
-    rules,
-    rngSeed: options.seed ?? 12345,
-    facDeck: makeFACDeck(options.seed ?? 12345),
-    teams: options.teams || [defaultTeam('Home'), defaultTeam('Away')],
-    possession: 0,
-    defence: 1,
-    score: [0, 0],
-    quarter: 1,
-    clock: rules.quarterLength,
-    down: 1,
-    distance: 10,
-    yardLine: 25,
-    driveStartYardLine: 25,
+    seed,
+    missionClockMins: 0,
+    phase: 'outbound',
+    throttle: 'cruise',
+    altitudeBand: 'medium',
+    distanceToTarget: options.distanceToTarget ?? 180,
+    distanceToHome: null,
+    fuel: 100,
+    integrity: 100,
+    morale: 100,
+    bombLoad: 100,
+    bombedTarget: false,
+    weather: pickWeather(rng),
+    log: ['Takeoff complete. Course set for target.'],
     gameOver: false,
-    lastResult: null,
-    log: [],
-    driveLog: [],
-    timeouts: [3, 3],
-    history: [],
-    awaitingKickoff: false,
+    win: null,
   };
 }
 
-function cloneState(state) {
-  return structuredClone(state);
+function formatMissionClock(totalMinutes) {
+  const hours = Math.floor(totalMinutes / 60).toString().padStart(2, '0');
+  const mins = (totalMinutes % 60).toString().padStart(2, '0');
+  return `${hours}:${mins}`;
 }
 
-function snapshotForUndo(state) {
-  const snap = cloneState(state);
-  snap.history = [];
-  return snap;
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 
-function finaliseState(state) {
-  if (state.log.length > 500) state.log = state.log.slice(-500);
-  if (state.driveLog.length > 200) state.driveLog = state.driveLog.slice(-200);
+function addLog(state, line) {
+  state.log.push(line);
+  if (state.log.length > 120) state.log = state.log.slice(-120);
+}
+
+function checkForEnd(state) {
+  if (state.integrity <= 0) {
+    state.integrity = 0;
+    state.gameOver = true;
+    state.win = false;
+    addLog(state, 'Aircraft lost. The crew did not return.');
+    return;
+  }
+  if (state.fuel <= 0) {
+    state.fuel = 0;
+    state.gameOver = true;
+    state.win = false;
+    addLog(state, 'Fuel exhausted before landing. Mission failed.');
+    return;
+  }
+  if (state.morale <= 0) {
+    state.morale = 0;
+    state.gameOver = true;
+    state.win = false;
+    addLog(state, 'Crew morale collapsed; mission aborted in disorder.');
+    return;
+  }
+
+  if (state.phase === 'outbound' && state.distanceToTarget <= 0) {
+    state.distanceToTarget = 0;
+    state.phase = 'target_zone';
+    addLog(state, 'Target area reached. Prepare bombing run.');
+  }
+
+  if (state.phase === 'homebound' && state.distanceToHome <= 0) {
+    state.distanceToHome = 0;
+    state.phase = 'landed';
+    state.gameOver = true;
+    state.win = state.bombedTarget;
+    addLog(state, state.win ? 'Landing successful. Objective completed.' : 'Landing successful, but target was not bombed.');
+  }
+}
+
+function combatEvent(state, rng, evasiveMode) {
+  const altitude = ALTITUDE_MODELS[state.altitudeBand];
+  const weather = WEATHER_MODELS[state.weather];
+  const exposure = altitude.flakRisk + altitude.fighterRisk + weather.interceptBonus;
+  const threatRoll = rng();
+
+  if (threatRoll > exposure) {
+    addLog(state, 'Quiet leg of flight; no enemy contact.');
+    return;
+  }
+
+  const attackRoll = rng();
+  const protection = evasiveMode ? 0.22 : 0.08;
+
+  if (attackRoll < 0.45 + protection) {
+    const damage = clamp(Math.floor((rng() * 9) + (evasiveMode ? 1 : 4)), 1, 12);
+    state.integrity = clamp(state.integrity - damage, 0, 100);
+    state.morale = clamp(state.morale - Math.ceil(damage / 2), 0, 100);
+    addLog(state, `Enemy attack endured. Integrity -${damage}%, morale reduced.`);
+    return;
+  }
+
+  const severe = clamp(Math.floor(10 + (rng() * 16)), 10, 25);
+  state.integrity = clamp(state.integrity - severe, 0, 100);
+  state.morale = clamp(state.morale - Math.ceil(severe / 2), 0, 100);
+  addLog(state, `Heavy hit from flak/fighters! Integrity -${severe}%.`);
+}
+
+function applyFlightStep(previous, input = {}, options = {}) {
+  const state = structuredClone(previous);
+  if (state.gameOver) return state;
+
+  const rng = mulberry32((state.seed += 1));
+  const throttle = THROTTLE_MODELS[input.throttle || state.throttle] ? (input.throttle || state.throttle) : state.throttle;
+  const altitudeBand = ALTITUDE_MODELS[input.altitudeBand || state.altitudeBand] ? (input.altitudeBand || state.altitudeBand) : state.altitudeBand;
+  const evasive = Boolean(input.evasive);
+
+  state.throttle = throttle;
+  state.altitudeBand = altitudeBand;
+  state.weather = pickWeather(rng);
+  state.missionClockMins += 10;
+
+  const throttleModel = THROTTLE_MODELS[throttle];
+  const weather = WEATHER_MODELS[state.weather];
+  const speed = Math.max(5, throttleModel.speed - weather.navPenalty);
+  const fuelBurn = throttleModel.fuelBurn + (evasive ? 1.5 : 0) + (altitudeBand === 'high' ? 0.7 : 0);
+
+  state.fuel = clamp(state.fuel - fuelBurn, 0, 100);
+
+  if (state.phase === 'outbound') {
+    state.distanceToTarget -= speed;
+    addLog(state, `Outbound leg: advanced ${speed} miles in ${state.weather.replace('_', ' ')}.`);
+  } else if (state.phase === 'homebound') {
+    state.distanceToHome -= speed;
+    addLog(state, `Return leg: closed ${speed} miles toward base in ${state.weather.replace('_', ' ')}.`);
+  } else if (state.phase === 'target_zone') {
+    addLog(state, 'Holding over target area awaiting bombing order.');
+    state.morale = clamp(state.morale - 2, 0, 100);
+  }
+
+  if (state.phase !== 'landed') {
+    combatEvent(state, rng, evasive);
+  }
+
+  checkForEnd(state);
+
+  if (options.forceBomb && state.phase === 'target_zone' && !state.bombedTarget && !state.gameOver) {
+    const hitChance = clamp(0.45 + (state.morale / 250) + (state.weather === 'clear' ? 0.15 : 0), 0.15, 0.9);
+    if (rng() <= hitChance) {
+      addLog(state, 'Bomb run successful: target heavily damaged.');
+      state.bombedTarget = true;
+    } else {
+      addLog(state, 'Bomb run scattered; limited effect on objective.');
+      state.bombedTarget = false;
+    }
+    state.bombLoad = 0;
+    state.phase = 'homebound';
+    state.distanceToHome = 185;
+    state.morale = clamp(state.morale - 6, 0, 100);
+  }
+
+  checkForEnd(state);
   return state;
-}
-
-function formatClock(seconds) {
-  const s = Math.max(0, Math.floor(seconds));
-  const m = Math.floor(s / 60).toString().padStart(2, '0');
-  const sec = (s % 60).toString().padStart(2, '0');
-  return `${m}:${sec}`;
-}
-
-function switchPossession(state, newYardLine = 100 - state.yardLine) {
-  state.possession = 1 - state.possession;
-  state.defence = 1 - state.defence;
-  state.down = 1;
-  state.distance = 10;
-  state.yardLine = Math.min(99, Math.max(1, newYardLine));
-  state.driveStartYardLine = state.yardLine;
-  state.driveLog.push(`Drive ended. Possession to ${state.teams[state.possession].name}.`);
-}
-
-function scorePoints(state, team, points, reason) {
-  state.score[team] += points;
-  state.log.push(`${state.teams[team].name} score ${points} (${reason}).`);
-  state.awaitingKickoff = true;
-}
-
-function randomRunoff(state, kind) {
-  const rng = mulberry32((state.rngSeed += 1));
-  const [min, max] = state.rules.playClockRunoff[kind];
-  return randInt(rng, min, max);
-}
-
-function applyClock(state, kind) {
-  state.clock -= randomRunoff(state, kind);
-  while (state.clock <= 0 && !state.gameOver) {
-    if (state.quarter >= 4) {
-      state.clock = 0;
-      state.gameOver = true;
-      state.log.push('Full time.');
-      break;
-    }
-    state.quarter += 1;
-    state.clock += state.rules.quarterLength;
-    state.log.push(`End Q${state.quarter - 1}. Start Q${state.quarter}.`);
-  }
-}
-
-function firstDownOrScore(state) {
-  if (state.yardLine >= 100) {
-    scorePoints(state, state.possession, 6, 'touchdown');
-    switchPossession(state, 35);
-    return;
-  }
-  if (state.yardLine <= 0) {
-    scorePoints(state, state.defence, 2, 'safety');
-    switchPossession(state, 35);
-    return;
-  }
-  if (state.distance <= 0) {
-    state.down = 1;
-    state.distance = Math.min(10, 100 - state.yardLine);
-    state.driveLog.push('First down achieved.');
-    return;
-  }
-  state.down += 1;
-  if (state.down > 4) {
-    state.log.push('Turnover on downs.');
-    switchPossession(state);
-  }
-}
-
-function resolvePenalty(state, yards, automaticFirstDown = false) {
-  state.yardLine = Math.max(1, Math.min(99, state.yardLine + yards));
-  state.log.push(`Penalty enforced: ${yards > 0 ? '+' : ''}${yards} yards.`);
-  if (automaticFirstDown) {
-    state.down = 1;
-    state.distance = Math.min(10, 100 - state.yardLine);
-  } else {
-    state.distance = Math.max(1, state.distance - yards);
-  }
-}
-
-function solitaireDefenceCall(state) {
-  const longYardage = state.distance >= 8;
-  const shortYardage = state.distance <= 2;
-  const late = state.quarter >= 4 && state.clock < 180;
-  if (late && state.score[state.possession] < state.score[state.defence]) return 'pass_focus';
-  if (shortYardage) return 'run_focus';
-  if (longYardage) return 'pass_focus';
-  const rng = mulberry32((state.rngSeed += 1));
-  const blitzBias = state.teams[state.defence]?.ratings?.tendencies?.blitz ?? 30;
-  return rng() < (blitzBias / 200) ? 'blitz' : 'base';
-}
-
-
-function applyCoachSettings(state, settings = {}) {
-  const team = state.teams[state.possession];
-  const t = team.ratings.tendencies;
-  if (typeof settings.aggression === 'number') t.aggression = settings.aggression;
-  if (typeof settings.pass === 'number') t.pass = settings.pass;
-  if (typeof settings.blitz === 'number') t.blitz = settings.blitz;
-  if (typeof settings.clock === 'number') t.clock = settings.clock;
-}
-
-function resolvePlay(prevState, offenseCall, defenseCall = 'auto', facCard) {
-  const state = cloneState(prevState);
-  if (state.gameOver) return finaliseState(state);
-
-  state.history.push(snapshotForUndo(prevState));
-  if (state.history.length > 200) state.history.shift();
-
-  if (state.awaitingKickoff && offenseCall.type !== 'kickoff') {
-    offenseCall = { type: 'kickoff' };
-  }
-
-  const off = state.teams[state.possession].ratings;
-  const def = state.teams[state.defence].ratings;
-  const logPrefix = `Q${state.quarter} ${formatClock(state.clock)} ${state.teams[state.possession].name}`;
-
-  if (offenseCall.type === 'kickoff') {
-    const returnYards = Math.max(10, 25 + Math.floor((facCard.secondary - 10) * 1.2));
-    state.awaitingKickoff = false;
-    switchPossession(state, returnYards);
-    applyClock(state, 'special');
-    state.log.push(`${logPrefix} kickoff, returned to ${returnYards}.`);
-    return finaliseState(state);
-  }
-
-  if (offenseCall.type === 'punt') {
-    const gross = 35 + Math.floor((off.special.punter + facCard.primary - 60) / 2);
-    const net = Math.max(20, gross - 5);
-    const newLine = Math.max(1, 100 - (state.yardLine + net));
-    applyClock(state, 'special');
-    state.log.push(`${logPrefix} punt net ${net} yards.`);
-    switchPossession(state, newLine);
-    return finaliseState(state);
-  }
-
-  if (offenseCall.type === 'field_goal') {
-    const distance = 117 - state.yardLine;
-    const chance = Math.max(0.1, Math.min(0.95, (off.special.kicker + (55 - distance)) / 100));
-    const made = facCard.primary / 20 <= chance;
-    applyClock(state, 'special');
-    if (made) {
-      scorePoints(state, state.possession, 3, `field goal from ${distance}`);
-      switchPossession(state, 35);
-      state.log.push(`${logPrefix} field goal good (${distance} yards).`);
-    } else {
-      state.log.push(`${logPrefix} field goal missed (${distance} yards).`);
-      switchPossession(state, Math.min(80, state.yardLine + 7));
-    }
-    return finaliseState(state);
-  }
-
-  if (defenseCall === 'auto') defenseCall = solitaireDefenceCall(state);
-  if (defenseCall === 'blitz' && !state.rules.allowBlitz) defenseCall = 'pass_focus';
-
-  const isRun = offenseCall.type === 'run';
-  const attack = isRun ? off.offence.run + off.offence.rb : off.offence.pass + off.offence.qb + off.offence.wr;
-  const resist = isRun ? def.defence.run + def.defence.front : def.defence.pass + def.defence.secondary;
-  const matchup = (attack - resist) / 25;
-  let yards = Math.floor(matchup + (facCard.primary - 10) / (isRun ? 1.7 : 1.4));
-
-  if (!isRun && defenseCall === 'blitz') yards -= 2;
-  if (isRun && defenseCall === 'run_focus') yards -= 2;
-  if (!isRun && defenseCall === 'pass_focus') yards -= 2;
-  if (facCard.bigPlay) yards += isRun ? 8 : 15;
-
-  const turnoverChanceBase = isRun ? 0.02 : 0.04;
-  const turnoverChance = turnoverChanceBase + (defenseCall === 'blitz' ? state.rules.turnoverBoostOnBlitz : 0);
-  const turnoverRoll = facCard.turnoverCheck && facCard.secondary / 20 < turnoverChance;
-
-  if (turnoverRoll) {
-    applyClock(state, isRun ? 'run' : 'pass');
-    if (!isRun && facCard.secondary <= 8) {
-      state.log.push(`${logPrefix} intercepted.`);
-      switchPossession(state, Math.max(1, 100 - state.yardLine + randInt(mulberry32(state.rngSeed += 1), -5, 15)));
-    } else {
-      state.log.push(`${logPrefix} fumble lost.`);
-      switchPossession(state, Math.max(1, 100 - state.yardLine + randInt(mulberry32(state.rngSeed += 1), -3, 8)));
-    }
-    return finaliseState(state);
-  }
-
-  if (facCard.penaltyCheck && facCard.primary / 20 < state.rules.penaltyChance) {
-    const offencePenalty = facCard.secondary <= 10;
-    applyClock(state, isRun ? 'run' : 'pass');
-    if (offencePenalty) {
-      resolvePenalty(state, -10, false);
-      state.log.push(`${logPrefix} offence penalty.`);
-    } else {
-      resolvePenalty(state, +5, facCard.secondary >= 18);
-      state.log.push(`${logPrefix} defence penalty.`);
-    }
-    return finaliseState(state);
-  }
-
-  applyClock(state, isRun ? 'run' : 'pass');
-  state.yardLine += yards;
-  state.distance -= yards;
-  state.log.push(`${logPrefix} ${isRun ? 'run' : 'pass'} for ${yards} yards (${defenseCall}).`);
-  firstDownOrScore(state);
-  return finaliseState(state);
 }
 
 function validateState(state) {
   const errors = [];
-  if (state.down < 1 || state.down > 4) errors.push('Down out of range');
-  if (state.distance < 1 || state.distance > 99) errors.push('Distance out of range');
-  if (state.yardLine < 0 || state.yardLine > 100) errors.push('Yard line out of range');
-  if (state.clock < 0) errors.push('Clock below zero');
-  if (state.quarter < 1 || state.quarter > 4) errors.push('Quarter out of range');
-  if (state.score.some((x) => x < 0)) errors.push('Negative score');
+  if (!['outbound', 'target_zone', 'homebound', 'landed'].includes(state.phase)) errors.push('invalid phase');
+  if (state.fuel < 0 || state.fuel > 100) errors.push('fuel out of bounds');
+  if (state.integrity < 0 || state.integrity > 100) errors.push('integrity out of bounds');
+  if (state.morale < 0 || state.morale > 100) errors.push('morale out of bounds');
+  if (state.bombLoad < 0 || state.bombLoad > 100) errors.push('bomb load out of bounds');
+  if (state.missionClockMins < 0) errors.push('negative mission clock');
   return { valid: errors.length === 0, errors };
 }
 
-function defaultDataModel() {
-  return {
-    schemaVersion: 1,
-    teams: [defaultTeam('Home'), defaultTeam('Away')],
-  };
-}
-
-// UI wiring
 if (typeof window !== 'undefined') {
   const el = {
-    homeName: document.getElementById('homeName'),
-    awayName: document.getElementById('awayName'),
-    homeScore: document.getElementById('homeScore'),
-    awayScore: document.getElementById('awayScore'),
-    quarter: document.getElementById('quarter'),
-    clock: document.getElementById('clock'),
-    gameState: document.getElementById('gameState'),
-    offenseCall: document.getElementById('offenseCall'),
-    offenseDetail: document.getElementById('offenseDetail'),
-    resolveBtn: document.getElementById('resolveBtn'),
-    undoBtn: document.getElementById('undoBtn'),
-    resetBtn: document.getElementById('resetBtn'),
-    exportBtn: document.getElementById('exportBtn'),
-    importBtn: document.getElementById('importBtn'),
-    saveBtn: document.getElementById('saveBtn'),
-    loadBtn: document.getElementById('loadBtn'),
-    dataText: document.getElementById('dataText'),
+    phase: document.getElementById('phase'),
+    time: document.getElementById('time'),
+    distance: document.getElementById('distance'),
+    altitude: document.getElementById('altitude'),
+    fuel: document.getElementById('fuel'),
+    integrity: document.getElementById('integrity'),
+    morale: document.getElementById('morale'),
+    bombLoad: document.getElementById('bombLoad'),
+    outcome: document.getElementById('outcome'),
+    throttle: document.getElementById('throttle'),
+    altitudeBand: document.getElementById('altitudeBand'),
+    advanceBtn: document.getElementById('advanceBtn'),
+    evasiveBtn: document.getElementById('evasiveBtn'),
+    bombBtn: document.getElementById('bombBtn'),
+    restartBtn: document.getElementById('restartBtn'),
     log: document.getElementById('log'),
-    drive: document.getElementById('drive'),
-    ruleset: document.getElementById('ruleset'),
-    coachAggression: document.getElementById('coachAggression'),
-    coachPass: document.getElementById('coachPass'),
-    coachBlitz: document.getElementById('coachBlitz'),
-    coachClock: document.getElementById('coachClock'),
-    facView: document.getElementById('facView'),
-    deckCount: document.getElementById('deckCount'),
-    ballMarker: document.getElementById('ballMarker'),
   };
 
-  let state = createInitialState();
-  let rng = mulberry32(state.rngSeed);
+  let state = createMissionState();
 
   function render() {
-    el.homeName.textContent = state.teams[0].name;
-    el.awayName.textContent = state.teams[1].name;
-    el.homeScore.textContent = state.score[0];
-    el.awayScore.textContent = state.score[1];
-    el.quarter.textContent = `Q${state.quarter}`;
-    el.clock.textContent = formatClock(state.clock);
-    el.gameState.textContent = `Solitaire mode | Possession: ${state.teams[state.possession].name} | ${state.down}&${state.distance} on ${state.yardLine}`;
-    el.deckCount.textContent = state.facDeck.drawPile.length;
-    el.ballMarker.style.left = `${state.yardLine}%`;
-    el.log.innerHTML = state.log.slice(-50).map((line) => `<li>${line}</li>`).join('');
-    el.drive.innerHTML = state.driveLog.slice(-10).map((line) => `<li>${line}</li>`).join('');
+    el.phase.textContent = state.phase.replace('_', ' ');
+    el.time.textContent = formatMissionClock(state.missionClockMins);
+    const distance = state.phase === 'homebound' ? state.distanceToHome : state.distanceToTarget;
+    el.distance.textContent = `${Math.max(0, Math.ceil(distance || 0))} mi`;
+    el.altitude.textContent = `${ALTITUDE_MODELS[state.altitudeBand].feet} ft`;
+    el.fuel.textContent = `${Math.round(state.fuel)}%`;
+    el.integrity.textContent = `${Math.round(state.integrity)}%`;
+    el.morale.textContent = `${Math.round(state.morale)}%`;
+    el.bombLoad.textContent = `${Math.round(state.bombLoad)}%`;
+    el.log.innerHTML = state.log.slice(-40).map((line) => `<li>${line}</li>`).join('');
+
+    if (!state.gameOver) {
+      el.outcome.className = 'outcome';
+      el.outcome.textContent = state.phase === 'target_zone' ? 'Over target: order bombing run when ready.' : 'Mission in progress.';
+    } else {
+      el.outcome.className = `outcome ${state.win ? '' : 'warn'}`;
+      el.outcome.textContent = state.win ? 'Mission success.' : 'Mission failed.';
+    }
+
+    el.bombBtn.disabled = !(state.phase === 'target_zone' && state.bombLoad > 0 && !state.gameOver);
+    el.advanceBtn.disabled = state.gameOver;
+    el.evasiveBtn.disabled = state.gameOver;
   }
 
-  function currentOffenseCall() {
-    const type = el.offenseCall.value;
-    return { type, detail: el.offenseDetail.value };
-  }
+  function applyStep(config = {}, stepOptions = {}) {
+    state = applyFlightStep(state, {
+      throttle: config.throttle || el.throttle.value,
+      altitudeBand: config.altitudeBand || el.altitudeBand.value,
+      evasive: Boolean(config.evasive),
+    }, stepOptions);
 
-  function stepPlay() {
-    applyCoachSettings(state, {
-      aggression: Number(el.coachAggression.value),
-      pass: Number(el.coachPass.value),
-      blitz: Number(el.coachBlitz.value),
-      clock: Number(el.coachClock.value),
-    });
-    const card = drawFAC(state.facDeck, rng);
-    el.facView.innerHTML = `Run/Pass: <strong>${card.runPassKey}</strong><br/>Direction: <strong>${card.direction}</strong><br/>Primary: <strong>${card.primary}</strong> | Secondary: <strong>${card.secondary}</strong><br/>Big play: ${card.bigPlay ? 'Yes' : 'No'} | Turnover check: ${card.turnoverCheck ? 'Yes' : 'No'} | Penalty check: ${card.penaltyCheck ? 'Yes' : 'No'}`;
-    state = resolvePlay(state, currentOffenseCall(), 'auto', card);
     const validity = validateState(state);
     if (!validity.valid) {
-      console.error('Invalid state', validity.errors, state);
+      console.error(validity.errors, state);
       alert(`Invalid state: ${validity.errors.join(', ')}`);
     }
     render();
   }
 
-  el.resolveBtn.addEventListener('click', stepPlay);
-  el.undoBtn.addEventListener('click', () => {
-    if (state.history.length > 0) {
-      state = state.history.pop();
-      render();
-    }
-  });
-  el.resetBtn.addEventListener('click', () => {
-    state = createInitialState({ ruleset: el.ruleset.value });
-    rng = mulberry32(state.rngSeed);
-    render();
-  });
-
-  el.ruleset.addEventListener('change', () => {
-    state.ruleset = el.ruleset.value;
-    state.rules = DEFAULT_RULESETS[state.ruleset];
-    render();
-  });
-
-  el.exportBtn.addEventListener('click', () => {
-    el.dataText.value = JSON.stringify({ teams: state.teams }, null, 2);
-  });
-  el.importBtn.addEventListener('click', () => {
-    try {
-      const data = JSON.parse(el.dataText.value);
-      if (!Array.isArray(data.teams) || data.teams.length !== 2) throw new Error('Need two teams');
-      state.teams = data.teams;
-      render();
-    } catch (err) {
-      alert(`Import failed: ${err.message}`);
-    }
-  });
-  el.saveBtn.addEventListener('click', () => {
-    localStorage.setItem('statis-season-slot-1', JSON.stringify(state));
-  });
-  el.loadBtn.addEventListener('click', () => {
-    const raw = localStorage.getItem('statis-season-slot-1');
-    if (!raw) return;
-    state = JSON.parse(raw);
-    rng = mulberry32(state.rngSeed);
+  el.advanceBtn.addEventListener('click', () => applyStep());
+  el.evasiveBtn.addEventListener('click', () => applyStep({ evasive: true }));
+  el.bombBtn.addEventListener('click', () => applyStep({}, { forceBomb: true }));
+  el.restartBtn.addEventListener('click', () => {
+    state = createMissionState();
     render();
   });
 
@@ -465,15 +280,13 @@ if (typeof window !== 'undefined') {
 
 if (typeof module !== 'undefined') {
   module.exports = {
-    DEFAULT_RULESETS,
+    THROTTLE_MODELS,
+    ALTITUDE_MODELS,
+    WEATHER_MODELS,
     mulberry32,
-    makeFACDeck,
-    drawFAC,
-    createInitialState,
-    resolvePlay,
+    createMissionState,
+    applyFlightStep,
     validateState,
-    solitaireDefenceCall,
-    defaultDataModel,
-    applyCoachSettings,
+    formatMissionClock,
   };
 }
